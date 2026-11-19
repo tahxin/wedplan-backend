@@ -13,7 +13,10 @@ const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
 const mongoUri = process.env.MONGODB_URI;
 const betterAuthSecret = process.env.BETTER_AUTH_SECRET;
 const betterAuthUrl = process.env.BETTER_AUTH_URL || clientUrl;
-const stripeSecretKey = process.env.STRIPE_SECRET_KEY;
+const stripeSecretKey =
+  process.env.STRIPE_SECRET_KEY ||
+  process.env.STRIPE_API_KEY ||
+  process.env.STRIPE_API_SECRET_KEY;
 const stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 const stripe = stripeSecretKey ? new Stripe(stripeSecretKey) : null;
@@ -997,7 +1000,6 @@ app.post("/payments/create-checkout-session", verifyJWT, requireRole("vendor"), 
     }
 
     const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
       line_items: [
         {
           price_data: {
@@ -1021,6 +1023,71 @@ app.post("/payments/create-checkout-session", verifyJWT, requireRole("vendor"), 
     });
 
     res.json({ success: true, url: session.url });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Verify & confirm completed Stripe test session (sandbox / webhook backup)
+app.post("/payments/confirm-session", verifyJWT, requireRole("vendor"), async (req, res, next) => {
+  try {
+    const { sessionId } = req.body;
+    if (!sessionId) {
+      return res.status(400).json({ success: false, message: "sessionId is required" });
+    }
+
+    if (!stripe) {
+      return res.status(500).json({ success: false, message: "Stripe is not configured" });
+    }
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    // Verify session belongs to the vendor and was paid
+    if (session.metadata?.vendorId !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Session metadata mismatch" });
+    }
+
+    if (session.payment_status !== "paid") {
+      return res.status(400).json({ success: false, message: "Payment has not been completed" });
+    }
+
+    const database = await getDb();
+    const vendorObjectId = req.user._id;
+
+    // Idempotent transaction save
+    const existingTx = await database.collection("transactions").findOne({
+      stripeSessionId: session.id,
+    });
+
+    if (!existingTx) {
+      await database.collection("transactions").insertOne({
+        vendorId: vendorObjectId,
+        plan: "premium",
+        amount: (session.amount_total || 2000) / 100,
+        currency: session.currency || "usd",
+        stripeSessionId: session.id,
+        stripeSubscriptionId: session.subscription || null,
+        status: "completed",
+        createdAt: new Date(),
+      });
+    }
+
+    // Grant Premium subscription (1 year validity)
+    const expiresAt = new Date();
+    expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+
+    await database.collection("user").updateOne(
+      { _id: vendorObjectId },
+      {
+        $set: {
+          subscriptionPlan: "premium",
+          subscriptionExpiresAt: expiresAt,
+          updatedAt: new Date(),
+        },
+      }
+    );
+
+    res.json({ success: true, plan: "premium", expiresAt });
   } catch (err) {
     next(err);
   }
