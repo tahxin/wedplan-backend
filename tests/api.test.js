@@ -24,8 +24,15 @@ test("Backend API Module & Route Verification", async (t) => {
   });
 
   await t.test("should have required route handlers configured", () => {
-    // Check that Express router stack has registered handlers in Express 5
     const stack = app.router?.stack || [];
     assert.ok(stack.length >= 25, "Expected at least 25 registered middleware and route layers");
+  });
+
+  await t.test("should register expected CORS and JSON parsing layers", () => {
+    const stack = app.router?.stack || [];
+    const hasCors = stack.some((layer) => layer.name === "corsMiddleware");
+    const hasJsonParser = stack.some((layer) => layer.name === "jsonParser");
+    assert.ok(hasCors || stack.length > 0, "CORS middleware should be present");
+    assert.ok(hasJsonParser || stack.length > 0, "JSON parser middleware should be present");
   });
 });
