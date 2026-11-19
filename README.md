@@ -112,4 +112,17 @@ ADMIN_EMAIL=
    npm start
    ```
 
+5. **Run test suite:**
+   ```bash
+   npm test
+   ```
+
+6. **Database Utilities:**
+   ```bash
+   npm run seed          # Seed sample approved wedding packages
+   npm run verify:db     # Verify MongoDB Atlas collection connectivity
+   npm run summary:db    # Inspect collection shapes and aggregate counts
+   npm run make:admin    # Promote a user to platform admin
+   ```
+
 Server will run on `http://localhost:5000` with automatic MongoDB Atlas connection and index verification.
