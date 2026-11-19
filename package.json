@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "seed": "node seed.js",
+    "verify:db": "node scripts/verify-db.js"
   },
   "dependencies": {
     "cors": "^2.8.6",
