@@ -353,19 +353,35 @@ If the repo already answers one of these, follow the repo and skip the question.
 > Update this section at the end of every task. Keep it short and factual.
 
 **Current structure:**
-- Frontend: Next.js (App Router), TypeScript, Tailwind CSS v4, Lucide icons, ShadCN components, Better Auth with MongoDB adapter.
-- Backend: Express.js (ESM), MongoDB driver, Stripe SDK, Jose JWT verification, single `index.js` containing all public, auth, customer, vendor, admin, and Stripe webhook endpoints.
+- Frontend: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, Lucide icons, ShadCN UI primitives, Sonner toasts, Better Auth with MongoDB adapter.
+- Backend: Express.js (ESM), MongoDB driver with native pooling & indexes, Stripe SDK, Jose JWT & session verification, single `index.js` containing all REST endpoints and verified Stripe webhook handlers.
 
 **Done:**
-- Backend baseline setup with ESM, MongoDB Atlas connection, automatic database indexes setup.
-- Complete Express REST API implemented: health check, services browse/filter/sort, categories, single service details, `/me`, vendor CRUD & availability toggle, vendor booking requests management (accept/reject), Stripe checkout session creation, customer bookings & cancellation, admin users & services management (block/unblock, approve/reject), admin transactions read-only, and Stripe webhook handler with idempotent processing.
-- Authentication & JWT middleware supporting both Better Auth session tokens and JWT verification.
-- Better Auth extended user schema (`role`, `isBlocked`, `businessName`, `subscriptionPlan`, `subscriptionExpiresAt`), Google OAuth provider support, and JWT/Bearer plugins.
-- MongoDB connection reuse helper in Frontend (`src/lib/mongodb.ts`).
-- Environment variable examples (`.env.example`) added for both Frontend and Backend, safely tracked in git.
+- Backend baseline setup with ESM, MongoDB Atlas connection, and automatic compound/partial database indexes.
+- Complete Express REST API:
+  - Public: Health (`/`), Categories with live counts (`/categories`), Featured services (`/services/featured`), Browse services with search/filter/price-sort (`/services`), Single service details with vendor lookup (`/services/:id`).
+  - Auth/User: Profile fetching & whitelisted updating (`/me`).
+  - Vendor: Overview metrics (`/vendor/overview`), Service CRUD & availability toggle (`/vendor/services`), Booking review accept/reject (`/vendor/bookings`), Stripe Checkout session generator (`/payments/create-checkout-session`), Free plan limit of 3 active services enforced on server.
+  - Customer: Inquiries creation with duplicate-date prevention (`/bookings`), Customer overview metrics (`/customer/overview`), Bookings listing & cancellation (`/customer/bookings`).
+  - Admin: Platform metrics (`/admin/overview`), User directory & block/unblock with session invalidation (`/admin/users`), Service review queue approve/reject/delete (`/admin/services`), Stripe transactions ledger (`/admin/transactions`).
+  - Stripe Webhook: Signature verification, idempotent transaction recording on `checkout.session.completed`, automatic plan downgrades on cancellation/expiry.
+- Dual-token Auth Middleware supporting both Better Auth session tokens and JWTs via secret or JWKS.
+- Better Auth extended user schema (`role`, `isBlocked`, `businessName`, `subscriptionPlan`, `subscriptionExpiresAt`), Google OAuth provider, and JWT/Bearer plugins.
+- Server-side ImgBB upload proxy endpoint (`/api/upload`) keeping the API key hidden from client bundles.
+- Frontend Core Layout: Responsive `Navbar` with role-aware avatar dropdown and `Footer` with wedding branding.
+- Home page with Hero banner, 6 service categories, popular packages, value propositions, and interactive steps.
+- Browse Services page with dynamic search, category pills, location filter, and price ascending/descending sorting.
+- Service Details page with image gallery, package investment details, and customer direct booking inquiry modal.
+- Customer Dashboard with booking statistics, request status indicators, and cancellation actions.
+- Vendor Dashboard with metrics, service management, availability toggles, client request responses (Accept/Decline), and Stripe Premium upgrade.
+- Admin Dashboard with metrics overview, user blocking/unblocking, service review queue, and transaction logs.
+- Role-based Profile Settings page (`/dashboard/settings` and role subpaths) with avatar uploading.
+- Custom 404 Not Found page and global Error boundary.
+- Stripe payment success/cancel feedback pages.
+- Both repositories equipped with `.env.example` and complete professional `README.md` files.
 
 **In progress:**
-- Frontend UI development: Navigation, Authentication pages (Sign In, Sign Up with role select), Home page, Browse Services, Service Details, and Dashboards (Customer, Vendor, Admin).
+- Final verification and pushing commits to remote repositories.
 
 **Known issues / decisions made:**
 - Database: MongoDB Atlas (decided).
