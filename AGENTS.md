@@ -182,6 +182,7 @@ Required pieces (names are indicative):
 - `GET /vendor/services`, `POST /vendor/services`, `PATCH /vendor/services/:id`, `DELETE /vendor/services/:id`, `PATCH /vendor/services/:id/availability`
 - `GET /vendor/bookings`, `PATCH /vendor/bookings/:id/accept`, `PATCH /vendor/bookings/:id/reject`
 - `POST /payments/create-checkout-session` — creates Stripe Checkout session for the logged-in vendor
+- `POST /payments/confirm-session` — directly verifies & confirms paid Stripe session (Stripe test mode / sandbox backup)
 - `GET /vendor/subscription` — plan + expiry
 
 **Customer (role: customer)**
@@ -266,11 +267,11 @@ Suggested URL shape (follow the repo if it already differs): `/dashboard/custome
 
 1. Vendor clicks **Upgrade to Premium** → client calls `POST /payments/create-checkout-session`.
 2. Server verifies JWT + role `vendor`, creates the Stripe Checkout Session for that vendor (store `vendorId` in session metadata), returns the URL.
-3. Client redirects to Stripe. Success → `/payment/success`, cancel → `/payment/cancel`.
-4. Stripe calls `POST /webhooks/stripe`. Server verifies the signature, then (idempotently) saves the transaction and sets `subscriptionPlan = "premium"` and `subscriptionExpiresAt`.
+3. Client redirects to Stripe. Success → `/payment/success?session_id={CHECKOUT_SESSION_ID}`, cancel → `/payment/cancel`.
+4. Stripe calls `POST /webhooks/stripe`. Server verifies the signature, then (idempotently) saves the transaction and sets `subscriptionPlan = "premium"` and `subscriptionExpiresAt`. Additionally, `/payment/success` posts `session_id` directly to `POST /payments/confirm-session` for immediate verification in test sandbox environments without requiring webhook tunnels.
 5. Cancel/expire events revert the vendor to `free`.
 
-Local testing: Stripe CLI `stripe listen --forward-to localhost:<port>/webhooks/stripe` (the CLI prints the local webhook secret). Live site: register the production webhook endpoint in the Stripe dashboard.
+Local testing: Stripe CLI `stripe listen --forward-to localhost:<port>/webhooks/stripe` (the CLI prints the local webhook secret) or test mode credentials with `POST /payments/confirm-session`. Live site: register the production webhook endpoint in the Stripe dashboard.
 
 ---
 
