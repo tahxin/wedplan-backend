@@ -352,13 +352,20 @@ If the repo already answers one of these, follow the repo and skip the question.
 
 > Update this section at the end of every task. Keep it short and factual.
 
-**Current structure:** _not recorded yet — the first agent should scan the repo and fill this in._
+**Current structure:**
+- Frontend: Next.js (App Router), TypeScript, Tailwind CSS v4, Lucide icons, ShadCN components, Better Auth with MongoDB adapter.
+- Backend: Express.js (ESM), MongoDB driver, Stripe SDK, Jose JWT verification, single `index.js` containing all public, auth, customer, vendor, admin, and Stripe webhook endpoints.
 
 **Done:**
-- (none recorded)
+- Backend baseline setup with ESM, MongoDB Atlas connection, automatic database indexes setup.
+- Complete Express REST API implemented: health check, services browse/filter/sort, categories, single service details, `/me`, vendor CRUD & availability toggle, vendor booking requests management (accept/reject), Stripe checkout session creation, customer bookings & cancellation, admin users & services management (block/unblock, approve/reject), admin transactions read-only, and Stripe webhook handler with idempotent processing.
+- Authentication & JWT middleware supporting both Better Auth session tokens and JWT verification.
+- Better Auth extended user schema (`role`, `isBlocked`, `businessName`, `subscriptionPlan`, `subscriptionExpiresAt`), Google OAuth provider support, and JWT/Bearer plugins.
+- MongoDB connection reuse helper in Frontend (`src/lib/mongodb.ts`).
+- Environment variable examples (`.env.example`) added for both Frontend and Backend, safely tracked in git.
 
 **In progress:**
-- (none recorded)
+- Frontend UI development: Navigation, Authentication pages (Sign In, Sign Up with role select), Home page, Browse Services, Service Details, and Dashboards (Customer, Vendor, Admin).
 
 **Known issues / decisions made:**
 - Database: MongoDB Atlas (decided).
