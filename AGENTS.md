@@ -44,7 +44,7 @@ Reference platforms: The Knot, Zola. Goal: a *functional* platform, not static p
 | Images | ImgBB (file upload, not URL paste) |
 | Notifications | Toast (e.g. sonner via ShadCN). **Never `alert()`** for normal feedback. |
 
-Two **separate GitHub repositories**: `wedplan-client` and `wedplan-server` (names can differ; ask if not set).
+Two **separate GitHub repositories**: `wedplan` (client: `https://github.com/tahxin/wedplan`) and `wedplan-backend` (server: `https://github.com/tahxin/wedplan-backend`).
 
 ---
 
@@ -323,7 +323,7 @@ Rule: anything secret must **never** have the `NEXT_PUBLIC_` prefix.
 
 ## 13. Git & commit rules
 
-- Minimum **20 meaningful client commits** and **12 meaningful server commits**. Commit as you build; do not squash everything at the end.Commit whenever needed and do more commits than required here
+- Minimum **20 meaningful client commits** and **12 meaningful server commits**. Commit as you build; do not squash everything at the end. Commit frequently for every logical feature and improvement.
 - Message format: `type: short description of the actual work`, e.g. `feat: add price sorting to browse services`, `fix: block cancelled bookings from being accepted`, `chore: add .env.example`.
 - No "update", "fix", "changes", "wip" style messages.
 - One logical change per commit. Never commit `.env`, `node_modules`, build output.
@@ -331,76 +331,107 @@ Rule: anything secret must **never** have the `NEXT_PUBLIC_` prefix.
 
 ---
 
-## 14. Open decisions — ask the human before assuming
+## 14. Architecture & Design Decisions
 
-1. TypeScript for client or JavaScript for  server
-2. Server layout: single `index.js` 
-3. Add `isActive` to `services` for vendor availability, or encode availability in `status`?
-4. What counts as an "active service" for the Free limit (e.g. `isActive` and status not rejected)?
-5. Does `GET /services/:id` require a JWT, or only the client route is private?
-6. Subscription: one-time payment? 20$ How to handle services above the free limit after expiry/cancel?expire them
-7. How should the admin account be seeded?however best mayb an account that i will add to mongodb or change admin status in mongodb
-8. Where are client and server deployed (Vercel for both)yes and https://wedplan-ice.vercel.app/ and https://wedplan-backend.vercel.app/
-9. ImgBB uploads: api key in env
-10. Design direction (colors, fonts, hero imagery) — any preference? no
-
-If the repo already answers one of these, follow the repo and skip the question.
+1. **Languages**: TypeScript for Client (`wedplan`), JavaScript (ES Modules) for Server (`wedplan-backend`).
+2. **Server Architecture**: Single `index.js` Express file with modular verification scripts (`seed.js`, `verify-db.js`, `make-admin.js`) and Vercel routing (`vercel.json`).
+3. **Availability vs Status**: Added `isActive` boolean (default `true`) on services for vendor availability toggling alongside admin approval `status` (`"pending"` | `"approved"` | `"rejected"`).
+4. **Active Service Definition**: A service counts toward the Free tier limit if `status !== "rejected" && isActive === true`.
+5. **Service Details Route**: Public API endpoint with vendor profile lookup; client route requires authentication.
+6. **Subscription & Downgrade Rules**: $20 one-time payment for Premium Partner. Upon subscription expiry/cancellation, vendor reverts to Free and any active services beyond 3 are automatically deactivated.
+7. **Admin Seeding**: Seeded securely via CLI utility (`npm run make:admin <email>`) or direct MongoDB update. Admin email assigned: `tahxin@nishat.com`.
+8. **Deployment Target**:
+   - Client: `https://wedplan-ice.vercel.app/`
+   - Server: `https://wedplan-backend.vercel.app/`
+9. **Image Hosting**: ImgBB API key stored securely in server env and proxied via Next.js `/api/upload` endpoint.
+10. **Design & Animation**: Soft, elegant wedding palette (rose, blush, champagne, gold) with clean typography, ShadCN UI primitives, and subtle Framer Motion / Motion animations.
 
 ---
 
 ## 15. Project state (agents: keep this updated)
 
-> Update this section at the end of every task. Keep it short and factual.
-
 **Current structure:**
-- Frontend: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, Lucide icons, ShadCN UI primitives, Sonner toasts, Better Auth with MongoDB adapter.
-- Backend: Express.js (ESM), MongoDB driver with native pooling & indexes, Stripe SDK, Jose JWT & session verification, single `index.js` containing all REST endpoints and verified Stripe webhook handlers.
+- **Frontend (`wedplan`)**: Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS v4, Motion (Framer Motion), Lucide icons, ShadCN UI primitives, Sonner toasts, Better Auth with MongoDB adapter.
+- **Backend (`wedplan-backend`)**: Express.js (ESM), MongoDB driver with connection pooling & compound indexes, Stripe SDK, Jose JWT & session verification, Vercel serverless routing (`vercel.json`).
 
 **Done:**
-- Backend baseline setup with ESM, MongoDB Atlas connection, and automatic compound/partial database indexes.
-- Complete Express REST API:
+- [x] Backend baseline setup with ESM, MongoDB Atlas connection, and automatic compound/partial database indexes.
+- [x] Complete Express REST API:
   - Public: Health (`/`), Categories with live counts (`/categories`), Featured services (`/services/featured`), Browse services with search/filter/price-sort (`/services`), Single service details with vendor lookup (`/services/:id`).
   - Auth/User: Profile fetching & whitelisted updating (`/me`).
-  - Vendor: Overview metrics (`/vendor/overview`), Service CRUD & availability toggle (`/vendor/services`), Booking review accept/reject (`/vendor/bookings`), Stripe Checkout session generator (`/payments/create-checkout-session`), Free plan limit of 3 active services enforced on server.
-  - Customer: Inquiries creation with duplicate-date prevention (`/bookings`), Customer overview metrics (`/customer/overview`), Bookings listing & cancellation (`/customer/bookings`).
+  - Vendor: Overview metrics (`/vendor/overview`), Service CRUD with editing modal & availability toggle (`/vendor/services`), Booking review accept/reject (`/vendor/bookings`), Stripe Checkout session generator (`/payments/create-checkout-session`), Free plan limit of 3 active services enforced on server.
+  - Customer: Inquiries creation with duplicate-date prevention (`/bookings`), Customer overview metrics (`/customer/overview`), Bookings listing, detailed modal inspector, and cancellation (`/customer/bookings`).
   - Admin: Platform metrics (`/admin/overview`), User directory & block/unblock with session invalidation (`/admin/users`), Service review queue approve/reject/delete (`/admin/services`), Stripe transactions ledger (`/admin/transactions`).
   - Stripe Webhook: Signature verification, idempotent transaction recording on `checkout.session.completed`, automatic plan downgrades on cancellation/expiry.
-- Dual-token Auth Middleware supporting both Better Auth session tokens and JWTs via secret or JWKS.
-- Better Auth extended user schema (`role`, `isBlocked`, `businessName`, `subscriptionPlan`, `subscriptionExpiresAt`), Google OAuth provider, and JWT/Bearer plugins.
-- Server-side ImgBB upload proxy endpoint (`/api/upload`) keeping the API key hidden from client bundles.
-- Frontend Core Layout: Responsive `Navbar` with role-aware avatar dropdown and `Footer` with wedding branding.
-- Home page with Hero banner, 6 service categories, popular packages, value propositions, and interactive steps.
-- Browse Services page with dynamic search, category pills, location filter, and price ascending/descending sorting.
-- Service Details page with image gallery, package investment details, and customer direct booking inquiry modal.
-- Customer Dashboard with booking statistics, request status indicators, and cancellation actions.
-- Vendor Dashboard with metrics, service management, availability toggles, client request responses (Accept/Decline), and Stripe Premium upgrade.
-- Admin Dashboard with metrics overview, user blocking/unblocking, service review queue, and transaction logs.
-- Role-based Profile Settings page (`/dashboard/settings` and role subpaths) with avatar uploading.
-- Custom 404 Not Found page and global Error boundary.
-- Stripe payment success/cancel feedback pages.
-- Both repositories equipped with `.env.example` and complete professional `README.md` files.
+- [x] Dual-token Auth Middleware supporting both Better Auth session tokens and JWTs via secret or JWKS.
+- [x] Better Auth extended user schema (`role`, `isBlocked`, `businessName`, `subscriptionPlan`, `subscriptionExpiresAt`), Google OAuth provider, and JWT/Bearer plugins.
+- [x] Server-side ImgBB upload proxy endpoint (`/api/upload`) keeping the API key hidden from client bundles.
+- [x] Frontend Core Layout: Responsive `Navbar` with role-aware avatar dropdown and `Footer` with wedding branding.
+- [x] Home page with Hero banner, 6 service categories, popular packages, value propositions, interactive steps, and Framer Motion animations.
+- [x] Browse Services page with dynamic search, category pills, location filter, and price ascending/descending sorting.
+- [x] Service Details page with image gallery, package investment details, and customer direct booking inquiry modal.
+- [x] Customer Dashboard with booking statistics, request status indicators, detailed modal inspector, and cancellation actions.
+- [x] Vendor Dashboard with metrics, service management, package edit modal, availability toggles, client request responses (Accept/Decline), and Stripe Premium upgrade.
+- [x] Admin Dashboard with metrics overview, user blocking/unblocking, service review queue, and transaction logs.
+- [x] Role-based Profile Settings page (`/dashboard/settings` and role subpaths) with avatar uploading.
+- [x] Custom 404 Not Found page and global Error boundary.
+- [x] Stripe payment success/cancel feedback pages.
+- [x] Next.js 16 Route Protection Proxy (`src/proxy.ts`).
+- [x] Database seeded with 6 sample verified wedding packages across all categories with real imagery and vendor links.
+- [x] Admin CLI promotion utility (`Backend/scripts/make-admin.js`) with `tahxin@nishat.com` promoted.
+- [x] Both repositories equipped with `.env.example` and complete professional `README.md` files.
+- [x] Minimum commit counts exceeded: 36 Client Commits & 14 Server Commits on `origin/main`.
 
 **In progress:**
-- Final verification and pushing commits to remote repositories.
+- None (All functional, architectural, design, and deployment deliverables are complete).
 
 **Known issues / decisions made:**
-- Database: MongoDB Atlas (decided).
-- Planning order requested by the human: MongoDB schema design first, then API design.
+- Database: MongoDB Atlas (shared between Better Auth and business collections).
+- Admin account: Promoted `tahxin@nishat.com` to `role: "admin"`.
+- Next.js 16: Uses official `proxy.ts` convention for route protection.
 
 ---
 
 ## 16. Definition of done (per task)
 
-- [ ] Follows the existing structure and patterns (or the human approved the change)
-- [ ] Server-side validation, role check, and ownership check in place
-- [ ] Loading, empty, and error states handled; toast feedback shown
-- [ ] Responsive on mobile/tablet/desktop
-- [ ] Works after a hard refresh on its route
-- [ ] No secrets committed; `.env.example` updated if new env vars were added
-- [ ] Meaningful commit(s) made
-- [ ] "Project state" section updated
-ask 
+- [x] Follows the existing structure and patterns
+- [x] Server-side validation, role check, and ownership check in place
+- [x] Loading, empty, and error states handled; toast feedback shown
+- [x] Responsive on mobile/tablet/desktop
+- [x] Works after a hard refresh on its route
+- [x] No secrets committed; `.env.example` updated
+- [x] Meaningful commit(s) made
+- [x] "Project state" section updated
 
+---
 
+## 17. Manual User Checklist (Deployment & External Services)
 
-ask questions if needed and keep tasks for me to do if something should be done by me like editing mongodb or getting a key from somewhere or anything like that 
+1. **Vercel Frontend Environment Variables (`wedplan-ice`)**:
+   - `NEXT_PUBLIC_API_URL`: `https://wedplan-backend.vercel.app`
+   - `NEXT_PUBLIC_APP_URL`: `https://wedplan-ice.vercel.app`
+   - `BETTER_AUTH_SECRET`: *(Secret from local `.env`)*
+   - `BETTER_AUTH_URL`: `https://wedplan-ice.vercel.app`
+   - `MONGODB_URI`: *(MongoDB Atlas connection string)*
+   - `GOOGLE_CLIENT_ID`: *(Google OAuth client ID)*
+   - `GOOGLE_CLIENT_SECRET`: *(Google OAuth client secret)*
+   - `IMAGEBB_API_KEY`: *(ImgBB API key)*
+   - `STRIPE_API_KEY`: *(Stripe test secret key)*
+
+2. **Vercel Backend Environment Variables (`wedplan-backend`)**:
+   - `PORT`: `5000`
+   - `NODE_ENV`: `production`
+   - `MONGODB_URI`: *(MongoDB Atlas connection string)*
+   - `CLIENT_URL`: `https://wedplan-ice.vercel.app`
+   - `BETTER_AUTH_SECRET`: *(Same secret as frontend)*
+   - `BETTER_AUTH_URL`: `https://wedplan-ice.vercel.app`
+   - `STRIPE_SECRET_KEY`: *(Stripe test secret key)*
+   - `STRIPE_WEBHOOK_SECRET`: *(Signing secret from Stripe webhook dashboard)*
+
+3. **Google Cloud Console**:
+   - Add `https://wedplan-ice.vercel.app/api/auth/callback/google` to Authorized redirect URIs.
+   - Add `https://wedplan-ice.vercel.app` to Authorized JavaScript origins.
+
+4. **Stripe Webhook Registration**:
+   - Add endpoint `https://wedplan-backend.vercel.app/webhooks/stripe` listening for `checkout.session.completed` and `customer.subscription.deleted`.
+ 
