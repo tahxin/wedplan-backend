@@ -10,6 +10,7 @@
     "health:db": "node scripts/health-check.js",
     "summary:db": "node scripts/export-summary.js",
     "make:admin": "node scripts/make-admin.js",
+    "demo:account": "node scripts/create-demo-account.js",
     "test": "node --test tests/api.test.js"
   },
   "dependencies": {
