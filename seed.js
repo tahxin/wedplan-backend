@@ -1,5 +1,6 @@
-import { MongoClient, ObjectId } from "mongodb";
+import { MongoClient } from "mongodb";
 import dotenv from "dotenv";
+import { hashPassword } from "./scripts/password.js";
 
 dotenv.config();
 
@@ -95,22 +96,53 @@ async function seed() {
     await client.connect();
     const db = client.db();
 
-    // Find or create a default vendor for demo services
+    // Find or create a default vendor for demo services.
+    // Users must always get a matching credential `account` document, otherwise
+    // Better Auth can never sign them in (INVALID_EMAIL_OR_PASSWORD).
     let vendor = await db.collection("user").findOne({ role: "vendor" });
     if (!vendor) {
+      const now = new Date();
       const newVendor = {
         name: "Grand Mirage Wedding Co.",
         email: "studio@grandmirage.com",
+        emailVerified: false,
         role: "vendor",
         businessName: "Grand Mirage Wedding Co.",
         subscriptionPlan: "premium",
+        subscriptionExpiresAt: null,
         isBlocked: false,
-        createdAt: new Date(),
-        updatedAt: new Date(),
+        createdAt: now,
+        updatedAt: now,
       };
       const res = await db.collection("user").insertOne(newVendor);
       vendor = { _id: res.insertedId, ...newVendor };
       console.log("Created demo vendor account:", vendor.email);
+    }
+
+    // Attach a credential account so the demo vendor can actually sign in.
+    const demoPassword = process.env.DEMO_VENDOR_PASSWORD;
+    const vendorAccount = await db
+      .collection("account")
+      .findOne({ userId: vendor._id, providerId: "credential" });
+
+    if (!vendorAccount) {
+      if (demoPassword) {
+        const now = new Date();
+        await db.collection("account").insertOne({
+          accountId: vendor._id.toString(),
+          providerId: "credential",
+          userId: vendor._id,
+          password: await hashPassword(demoPassword),
+          createdAt: now,
+          updatedAt: now,
+        });
+        console.log("Attached a credential account to the demo vendor.");
+      } else {
+        console.warn(
+          "Demo vendor has no credential account and DEMO_VENDOR_PASSWORD is not set.\n" +
+            "Run: npm run demo:account -- studio@grandmirage.com <password> vendor"
+        );
+      }
     }
 
     const servicesCount = await db.collection("services").countDocuments();
