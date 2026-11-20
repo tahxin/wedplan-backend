@@ -37,22 +37,49 @@ export const CATEGORIES = [
   "Wedding Fashion",
 ];
 
-// Reusable MongoDB client
+// Reusable MongoDB client (serverless-friendly; reconnect on stale/closed topology)
 let dbClient = null;
 let db = null;
+let dbConnectPromise = null;
 
 async function getDb() {
-  if (db) return db;
   if (!mongoUri) {
     throw new Error("MONGODB_URI is not defined in environment variables");
   }
-  if (!dbClient) {
-    dbClient = new MongoClient(mongoUri);
-    await dbClient.connect();
-  console.log(`Connected to MongoDB Atlas database: ${db.databaseName}`);
+
+  if (db && dbClient) {
+    try {
+      await db.command({ ping: 1 });
+      return db;
+    } catch {
+      db = null;
+      try {
+        await dbClient.close();
+      } catch {
+        // ignore close errors on stale client
+      }
+      dbClient = null;
+      dbConnectPromise = null;
+    }
   }
-  db = dbClient.db("wedplan");
-  return db;
+
+  if (!dbConnectPromise) {
+    dbConnectPromise = (async () => {
+      const client = new MongoClient(mongoUri);
+      await client.connect();
+      dbClient = client;
+      db = client.db("wedplan");
+      console.log(`Connected to MongoDB Atlas database: ${db.databaseName}`);
+      return db;
+    })().catch((err) => {
+      db = null;
+      dbClient = null;
+      dbConnectPromise = null;
+      throw err;
+    });
+  }
+
+  return dbConnectPromise;
 }
 
 // Ensure indexes on startup
