@@ -14,7 +14,7 @@ async function exportSummary() {
   const client = new MongoClient(mongoUri);
   try {
     await client.connect();
-    const db = client.db();
+    const db = client.db("wedplan");
 
     const collections = await db.listCollections().toArray();
     console.log("=== WedPlan Database Summary ===");

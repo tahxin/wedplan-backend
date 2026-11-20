@@ -49,9 +49,9 @@ async function getDb() {
   if (!dbClient) {
     dbClient = new MongoClient(mongoUri);
     await dbClient.connect();
-    console.log("Connected to MongoDB Atlas");
+  console.log(`Connected to MongoDB Atlas database: ${db.databaseName}`);
   }
-  db = dbClient.db();
+  db = dbClient.db("wedplan");
   return db;
 }
 

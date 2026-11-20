@@ -14,7 +14,7 @@ async function verify() {
     await client.connect();
     console.log("PASS: Successfully connected to MongoDB Atlas");
 
-    const db = client.db();
+    const db = client.db("wedplan");
     const collections = await db.listCollections().toArray();
     console.log("Collections:", collections.map((c) => c.name).join(", "));
 

@@ -51,7 +51,7 @@ async function main() {
 
   try {
     await client.connect();
-    const db = client.db();
+    const db = client.db("wedplan");
 
     let user = await db.collection("user").findOne({ email: normalizedEmail });
     let createdUser = false;

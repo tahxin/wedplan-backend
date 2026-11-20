@@ -94,7 +94,7 @@ async function seed() {
   const client = new MongoClient(process.env.MONGODB_URI);
   try {
     await client.connect();
-    const db = client.db();
+    const db = client.db("wedplan");
 
     // Find or create a default vendor for demo services.
     // Users must always get a matching credential `account` document, otherwise

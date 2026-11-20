@@ -18,7 +18,7 @@ async function simulate() {
   const client = new MongoClient(process.env.MONGODB_URI);
   try {
     await client.connect();
-    const db = client.db();
+    const db = client.db("wedplan");
 
     const vendor = await db.collection("user").findOne({ email: vendorEmail });
     if (!vendor) {

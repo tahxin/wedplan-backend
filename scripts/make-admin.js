@@ -14,7 +14,7 @@ async function makeAdmin() {
   const client = new MongoClient(process.env.MONGODB_URI);
   try {
     await client.connect();
-    const db = client.db();
+    const db = client.db("wedplan");
 
     if (!targetEmail) {
       console.log("Usage: node scripts/make-admin.js <user-email>");
