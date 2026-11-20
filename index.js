@@ -9,7 +9,13 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
-const clientUrl = process.env.CLIENT_URL || "http://localhost:3000";
+// CLIENT_URL may hold a comma-separated list; the first entry is the canonical
+// origin used for Stripe redirects, all of them are allowed by CORS.
+const clientOrigins = (process.env.CLIENT_URL || "http://localhost:3000")
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/$/, ""))
+  .filter(Boolean);
+const clientUrl = clientOrigins[0] || "http://localhost:3000";
 const mongoUri = process.env.MONGODB_URI;
 const betterAuthSecret = process.env.BETTER_AUTH_SECRET;
 const betterAuthUrl = process.env.BETTER_AUTH_URL || clientUrl;
@@ -81,19 +87,24 @@ async function setupIndexes() {
 // CORS configuration
 // ----------------------------------------------------
 const allowedOrigins = [
-  clientUrl,
+  ...clientOrigins,
   "http://localhost:3000",
+  "http://127.0.0.1:3000",
   "https://wedplan-ice.vercel.app",
-].filter(Boolean);
+].filter((origin, index, all) => origin && all.indexOf(origin) === index);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(null, true); // Permissive in dev, or allow origin
+      // Same-origin / server-to-server requests have no Origin header.
+      if (!origin) return callback(null, true);
+
+      const normalized = origin.replace(/\/$/, "");
+      if (allowedOrigins.includes(normalized)) {
+        return callback(null, true);
       }
+
+      return callback(new Error(`Origin ${normalized} is not allowed by CORS`));
     },
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "stripe-signature"],
@@ -233,6 +244,16 @@ function getRemoteJWKS() {
   return remoteJWKS;
 }
 
+/**
+ * Premium is only valid while `subscriptionExpiresAt` is in the future.
+ * Legacy rows seeded without an expiry are treated as active.
+ */
+export function isSubscriptionActive(user) {
+  if (!user || user.subscriptionPlan !== "premium") return false;
+  if (!user.subscriptionExpiresAt) return true;
+  return new Date(user.subscriptionExpiresAt).getTime() > Date.now();
+}
+
 export async function verifyJWT(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
@@ -294,6 +315,8 @@ export async function verifyJWT(req, res, next) {
       });
     }
 
+    const premiumActive = isSubscriptionActive(user);
+
     req.user = {
       id: user._id.toString(),
       _id: user._id,
@@ -303,7 +326,8 @@ export async function verifyJWT(req, res, next) {
       role: user.role || "customer",
       isBlocked: Boolean(user.isBlocked),
       businessName: user.businessName || "",
-      subscriptionPlan: user.subscriptionPlan || "free",
+      // An expired premium plan must behave exactly like the free plan.
+      subscriptionPlan: premiumActive ? "premium" : "free",
       subscriptionExpiresAt: user.subscriptionExpiresAt || null,
     };
 
@@ -514,7 +538,14 @@ app.get("/services/:id", async (req, res, next) => {
     const services = await database
       .collection("services")
       .aggregate([
-        { $match: { _id: new ObjectId(id) } },
+        {
+          $match: {
+            _id: new ObjectId(id),
+            // Public visibility rule: only approved + active services are readable.
+            status: "approved",
+            isActive: { $ne: false },
+          },
+        },
         {
           $lookup: {
             from: "user",
@@ -1122,6 +1153,24 @@ app.post("/bookings", verifyJWT, requireRole("customer"), async (req, res, next)
       return res.status(404).json({ success: false, message: "Invalid service ID" });
     }
 
+    // Validate the date up front: an unparseable value used to throw inside
+    // toISOString() and surface as an opaque 500.
+    const parsedDate = new Date(eventDate);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "eventDate must be a valid date (YYYY-MM-DD)",
+      });
+    }
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    if (parsedDate < startOfToday) {
+      return res.status(400).json({ success: false, message: "eventDate cannot be in the past" });
+    }
+
+    const eventDateIso = parsedDate.toISOString().split("T")[0];
+
     const database = await getDb();
     const service = await database.collection("services").findOne({ _id: new ObjectId(serviceId) });
 
@@ -1145,7 +1194,7 @@ app.post("/bookings", verifyJWT, requireRole("customer"), async (req, res, next)
     const existing = await database.collection("bookings").findOne({
       customerId: req.user._id,
       serviceId: service._id,
-      eventDate: new Date(eventDate).toISOString().split("T")[0],
+      eventDate: eventDateIso,
       status: { $in: ["pending", "accepted"] },
     });
 
@@ -1160,7 +1209,7 @@ app.post("/bookings", verifyJWT, requireRole("customer"), async (req, res, next)
       serviceId: service._id,
       vendorId: service.vendorId,
       customerId: req.user._id,
-      eventDate: new Date(eventDate).toISOString().split("T")[0],
+      eventDate: eventDateIso,
       eventLocation: eventLocation.trim(),
       message: message ? message.trim() : "",
       status: "pending",
@@ -1580,10 +1629,14 @@ app.patch("/admin/services/:id/approve", verifyJWT, requireRole("admin"), async 
     }
 
     const database = await getDb();
-    await database.collection("services").updateOne(
+    const result = await database.collection("services").updateOne(
       { _id: new ObjectId(id) },
       { $set: { status: "approved", updatedAt: new Date() } }
     );
+
+    if (!result.matchedCount) {
+      return res.status(404).json({ success: false, message: "Service not found" });
+    }
 
     res.json({ success: true, message: "Service approved successfully", status: "approved" });
   } catch (err) {
@@ -1600,10 +1653,14 @@ app.patch("/admin/services/:id/reject", verifyJWT, requireRole("admin"), async (
     }
 
     const database = await getDb();
-    await database.collection("services").updateOne(
+    const result = await database.collection("services").updateOne(
       { _id: new ObjectId(id) },
       { $set: { status: "rejected", updatedAt: new Date() } }
     );
+
+    if (!result.matchedCount) {
+      return res.status(404).json({ success: false, message: "Service not found" });
+    }
 
     res.json({ success: true, message: "Service rejected", status: "rejected" });
   } catch (err) {
@@ -1629,10 +1686,14 @@ app.patch("/admin/services/:id/status", verifyJWT, requireRole("admin"), async (
     }
 
     const database = await getDb();
-    await database.collection("services").updateOne(
+    const result = await database.collection("services").updateOne(
       { _id: new ObjectId(id) },
       { $set: { status, updatedAt: new Date() } }
     );
+
+    if (!result.matchedCount) {
+      return res.status(404).json({ success: false, message: "Service not found" });
+    }
 
     res.json({ success: true, message: `Service status updated to ${status}`, status });
   } catch (err) {
@@ -1649,7 +1710,11 @@ app.delete("/admin/services/:id", verifyJWT, requireRole("admin"), async (req, r
     }
 
     const database = await getDb();
-    await database.collection("services").deleteOne({ _id: new ObjectId(id) });
+    const result = await database.collection("services").deleteOne({ _id: new ObjectId(id) });
+
+    if (!result.deletedCount) {
+      return res.status(404).json({ success: false, message: "Service not found" });
+    }
 
     res.json({ success: true, message: "Service deleted by admin" });
   } catch (err) {
@@ -1705,6 +1770,19 @@ app.get("/admin/transactions", verifyJWT, requireRole("admin"), async (req, res,
 // ----------------------------------------------------
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
+  // Duplicate key from the partial unique booking index -> a real 409.
+  if (err?.code === 11000) {
+    return res.status(409).json({
+      success: false,
+      message: "You already have an active booking request for this service on this date.",
+    });
+  }
+
+  // A rejected CORS origin is an authorisation problem, not a server fault.
+  if (typeof err?.message === "string" && err.message.includes("not allowed by CORS")) {
+    return res.status(403).json({ success: false, message: "Origin not allowed" });
+  }
+
   console.error("Unhandled error:", err);
   const status = err.status || err.statusCode || 500;
   res.status(status).json({
