@@ -384,7 +384,7 @@ Rule: anything secret must **never** have the `NEXT_PUBLIC_` prefix.
 - [x] Minimum commit counts exceeded: 36 Client Commits & 14 Server Commits on `origin/main`.
 
 **In progress:**
-- None (All functional, architectural, design, and deployment deliverables are complete).
+- [x] Backend hardening completed: Regex ReDoS helper implemented, rate limiting added at root/payments/bookings, PATCH /services resets status to pending on approved service edit, `Backend/index_fixed.js` deleted, and tests added in `Backend/tests/hardening.test.js`. Report generated in `docs/superpowers/plans/sdd/task-2-report.md`.
 
 **Known issues / decisions made:**
 - Database: MongoDB Atlas (shared between Better Auth and business collections).

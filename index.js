@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import dotenv from "dotenv";
 import { MongoClient, ObjectId } from "mongodb";
 import Stripe from "stripe";
@@ -9,6 +10,55 @@ dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 5000;
+
+// ----------------------------------------------------
+// Regex escaping helper to prevent ReDoS / 500 on bad regex patterns
+// ----------------------------------------------------
+/**
+ * Escape user input used in $regex queries to prevent ReDoS attacks.
+ * Only allows safe characters: alphanumeric, spaces, and common wedding-related symbols.
+ * Throws a 400 error if the input contains potentially dangerous regex metacharacters.
+ */
+function escapeRegexInput(input) {
+  if (typeof input !== "string") {
+    throw new Error("Input must be a string");
+  }
+  // Allow only alphanumeric, spaces, apostrophes, ampersands, hyphens, and parentheses
+  // Anything else could be used for ReDoS injection
+  if (/[^\w\s&'()-]/.test(input)) {
+    throw new Error("Invalid characters in search input");
+  }
+  // Escape regex special characters
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// ----------------------------------------------------
+// Rate limiting middleware
+// ----------------------------------------------------
+// Root-level limiter: 100 requests per 15 minutes
+const rootLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  message: { success: false, message: "Too many requests from this IP, please try again later." },
+});
+
+// Payments endpoint limiter: 10 requests per 15 minutes
+const paymentsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  message: { success: false, message: "Too many payment requests, please try again later." },
+});
+
+// Bookings endpoint limiter: 50 requests per 15 minutes
+const bookingsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50,
+  message: { success: false, message: "Too many booking requests, please try again later." },
+});
+
+app.use("/", rootLimiter);
+app.use("/payments", paymentsLimiter);
+app.use("/bookings", bookingsLimiter);
 // CLIENT_URL may hold a comma-separated list; the first entry is the canonical
 // origin used for Stripe redirects, all of them are allowed by CORS.
 const clientOrigins = (process.env.CLIENT_URL || "http://localhost:3000")
@@ -164,6 +214,11 @@ app.post(
       switch (event.type) {
         case "checkout.session.completed": {
           const session = event.data.object;
+          // H2: Only activate premium on successful payment
+          if (session.payment_status !== "paid") {
+            break;
+          }
+
           const vendorIdStr = session.metadata?.vendorId;
           const plan = session.metadata?.plan || "premium";
 
@@ -172,7 +227,7 @@ app.post(
               ? new ObjectId(vendorIdStr)
               : vendorIdStr;
 
-            // Idempotent transaction recording
+            // Idempotent transaction recording (H1): skip if transaction already exists
             const existingTx = await database.collection("transactions").findOne({
               stripeSessionId: session.id,
             });
@@ -190,20 +245,26 @@ app.post(
               });
             }
 
-            // Grant Premium subscription (1 year validity)
-            const expiresAt = new Date();
-            expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+            // Grant Premium subscription (1 year validity) - only if not already premium
+            const userExists = await database.collection("user").findOne({
+              _id: vendorObjectId,
+            });
 
-            await database.collection("user").updateOne(
-              { _id: vendorObjectId },
-              {
-                $set: {
-                  subscriptionPlan: "premium",
-                  subscriptionExpiresAt: expiresAt,
-                  updatedAt: new Date(),
-                },
-              }
-            );
+            if (!userExists || userExists.subscriptionPlan !== "premium") {
+              const expiresAt = new Date();
+              expiresAt.setFullYear(expiresAt.getFullYear() + 1);
+
+              await database.collection("user").updateOne(
+                { _id: vendorObjectId },
+                {
+                  $set: {
+                    subscriptionPlan: "premium",
+                    subscriptionExpiresAt: expiresAt,
+                    updatedAt: new Date(),
+                  },
+                }
+              );
+            }
           }
           break;
         }
@@ -342,7 +403,44 @@ export async function verifyJWT(req, res, next) {
       });
     }
 
-    const premiumActive = isSubscriptionActive(user);
+    // H3: Downgrade logic - if subscriptionExpiresAt has passed, transition to free plan
+    let premiumActive = false;
+    if (user.subscriptionPlan === "premium" && user.subscriptionExpiresAt) {
+      premiumActive = new Date(user.subscriptionExpiresAt).getTime() > Date.now();
+    } else if (user.subscriptionPlan === "premium" && !user.subscriptionExpiresAt) {
+      // Legacy rows without expiry are treated as active (existing behavior)
+      premiumActive = true;
+    }
+
+    // If premium expired, downgrade to free and deactivate services beyond limit
+    if (!premiumActive && user.subscriptionPlan === "premium") {
+      // Downgrade plan to free
+      await database.collection("user").updateOne(
+        { _id: userObjectId },
+        {
+          $set: {
+            subscriptionPlan: "free",
+            subscriptionExpiresAt: null,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      // Deactivate services beyond free limit (max 3 active services)
+      const activeServices = await database
+        .collection("services")
+        .find({ vendorId: user._id, isActive: true })
+        .sort({ createdAt: 1 })
+        .toArray();
+
+      if (activeServices.length > 3) {
+        const toDeactivate = activeServices.slice(3).map((s) => s._id);
+        await database.collection("services").updateMany(
+          { _id: { $in: toDeactivate } },
+          { $set: { isActive: false, updatedAt: new Date() } }
+        );
+      }
+    }
 
     req.user = {
       id: user._id.toString(),
@@ -475,7 +573,7 @@ app.get("/services", async (req, res, next) => {
     };
 
     if (search && typeof search === "string" && search.trim()) {
-      query.serviceName = { $regex: search.trim(), $options: "i" };
+      query.serviceName = { $regex: escapeRegexInput(search.trim()), $options: "i" };
     }
 
     if (category && typeof category === "string" && category.trim()) {
@@ -483,7 +581,7 @@ app.get("/services", async (req, res, next) => {
     }
 
     if (location && typeof location === "string" && location.trim()) {
-      query.location = { $regex: location.trim(), $options: "i" };
+      query.location = { $regex: escapeRegexInput(location.trim()), $options: "i" };
     }
 
     const sortOption = {};
@@ -826,8 +924,14 @@ app.patch("/vendor/services/:id", verifyJWT, requireRole("vendor"), async (req, 
     if (location) updates.location = location.trim();
     if (images) updates.images = Array.isArray(images) ? images : [images];
 
-    updates.updatedAt = new Date();
-    await database.collection("services").updateOne({ _id: new ObjectId(id) }, { $set: updates });
+    // If the service was "approved", reset its status to "pending" because it has been edited
+    const updatePayload = { ...updates };
+    if (service.status === "approved") {
+      updatePayload.status = "pending";
+    }
+
+    updatePayload.updatedAt = new Date();
+    await database.collection("services").updateOne({ _id: new ObjectId(id) }, { $set: updatePayload });
 
     const updated = await database.collection("services").findOne({ _id: new ObjectId(id) });
     res.json({ success: true, message: "Service updated successfully", service: updated });
@@ -1112,7 +1216,21 @@ app.post("/payments/confirm-session", verifyJWT, requireRole("vendor"), async (r
     const database = await getDb();
     const vendorObjectId = req.user._id;
 
-    // Idempotent transaction save
+    // Idempotent transaction save: only grant if not already premium (H1)
+    const existingUser = await database.collection("user").findOne({
+      _id: vendorObjectId,
+    });
+
+    if (existingUser && existingUser.subscriptionPlan === "premium") {
+      // Already premium - just return current state without re-granting
+      return res.json({
+        success: true,
+        plan: existingUser.subscriptionPlan,
+        expiresAt: existingUser.subscriptionExpiresAt,
+      });
+    }
+
+    // Idempotent transaction record
     const existingTx = await database.collection("transactions").findOne({
       stripeSessionId: session.id,
     });
@@ -1130,7 +1248,7 @@ app.post("/payments/confirm-session", verifyJWT, requireRole("vendor"), async (r
       });
     }
 
-    // Grant Premium subscription (1 year validity)
+    // Grant Premium subscription (1 year validity) - only if not already premium
     const expiresAt = new Date();
     expiresAt.setFullYear(expiresAt.getFullYear() + 1);
 
